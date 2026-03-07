@@ -1,0 +1,495 @@
+﻿/*
+ * Lone EFT DMA Radar - Copyright (c) 2026 Lone DMA
+ * Licensed under GNU AGPLv3. See https://www.gnu.org/licenses/agpl-3.0.html
+ */
+using ImGuiNET;
+using LoneEftDmaRadar.Misc.JSON;
+using LoneEftDmaRadar.Tarkov;
+using LoneEftDmaRadar.UI.ColorPicker;
+using LoneEftDmaRadar.UI.Hotkeys;
+using LoneEftDmaRadar.UI.Misc;
+
+namespace LoneEftDmaRadar.UI.Panels
+{
+    /// <summary>
+    /// Settings Panel for the ImGui-based Radar.
+    /// </summary>
+    internal static class SettingsPanel
+    {
+        private static List<StaticContainerEntry> _containerEntries;
+
+        private static float _pendingRadarScale;
+        private static float _pendingMenuScale;
+        private static bool _pendingScalesInitialized;
+
+        // Panel-local state for tracking window open/close
+        private static bool _isOpen;
+
+        private static EftDmaConfig Config { get; } = Program.Config;
+
+        /// <summary>
+        /// Whether the settings panel is open.
+        /// </summary>
+        public static bool IsOpen
+        {
+            get => _isOpen;
+            set => _isOpen = value;
+        }
+
+        /// <summary>
+        /// Initialize the settings panel.
+        /// </summary>
+        public static void Initialize()
+        {
+            // Initialize container entries from TarkovDataManager
+            _containerEntries = TarkovDataManager.AllContainers.Values
+                .OrderBy(x => x.Name)
+                .Select(x => new StaticContainerEntry(x))
+                .ToList();
+        }
+
+        /// <summary>
+        /// Draw the settings panel.
+        /// </summary>
+        public static void Draw()
+        {
+            bool isOpen = _isOpen;
+            if (!ImGui.Begin("Settings", ref isOpen, ImGuiWindowFlags.AlwaysAutoResize))
+            {
+                _isOpen = isOpen;
+                ImGui.End();
+                return;
+            }
+            _isOpen = isOpen;
+
+            if (ImGui.BeginTabBar("SettingsTabs"))
+            {
+                DrawGeneralTab();
+                DrawPlayersTab();
+                DrawLootTab();
+                DrawContainersTab();
+                DrawQuestHelperTab();
+                DrawAboutTab();
+
+                ImGui.EndTabBar();
+            }
+
+            ImGui.End();
+        }
+
+        private static void DrawGeneralTab()
+        {
+            if (ImGui.BeginTabItem("General"))
+            {
+                ImGui.SeparatorText("Tools");
+
+                if (ImGui.Button("Hotkey Manager"))
+                {
+                    HotkeyManagerPanel.IsOpen = true;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Configure keyboard hotkeys for radar functions");
+                ImGui.SameLine();
+                if (ImGui.Button("Color Picker"))
+                {
+                    ColorPickerPanel.IsOpen = true;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Customize colors for players, loot, and UI elements");
+                ImGui.SameLine();
+                if (ImGui.Button("Map Setup Helper##btn"))
+                {
+                    MapSetupHelperPanel.IsOpen = true;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Adjust map calibration settings (X, Y, Scale)");
+
+                ImGui.Separator();
+
+                if (ImGui.Button("Restart Radar"))
+                {
+                    Memory.Game?.Restart();
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Restart the radar memory reader");
+                ImGui.SameLine();
+                if (ImGui.Button("Backup Config"))
+                {
+                    BackupConfig();
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Create a backup of your current configuration");
+                ImGui.SameLine();
+                if (ImGui.Button("Open Config Folder"))
+                {
+                    OpenConfigFolder();
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Open the folder containing configuration files");
+
+                ImGui.SeparatorText("Display Settings");
+
+                // Initialize pending scales
+                if (!_pendingScalesInitialized)
+                {
+                    _pendingRadarScale = Config.UI.RadarScale;
+                    _pendingMenuScale = Config.UI.MenuScale;
+                    _pendingScalesInitialized = true;
+                }
+
+                // Radar Scale
+                ImGui.SliderFloat("Radar Scale", ref _pendingRadarScale, 0.5f, 2.0f, "%.1f");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Scale the radar map and aimview widget");
+
+                bool radarScaleDirty = MathF.Abs(_pendingRadarScale - Config.UI.RadarScale) > 0.0001f;
+
+                ImGui.SameLine();
+                if (!radarScaleDirty)
+                    ImGui.BeginDisabled();
+                if (ImGui.Button("Apply##RadarScale"))
+                {
+                    Config.UI.RadarScale = _pendingRadarScale;
+                }
+                if (!radarScaleDirty)
+                    ImGui.EndDisabled();
+
+                // Menu Scale
+                ImGui.SliderFloat("Menu Scale", ref _pendingMenuScale, 0.5f, 2.0f, "%.1f");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Scale ImGui menus and windows");
+
+                bool menuScaleDirty = MathF.Abs(_pendingMenuScale - Config.UI.MenuScale) > 0.0001f;
+
+                ImGui.SameLine();
+                if (!menuScaleDirty)
+                    ImGui.BeginDisabled();
+                if (ImGui.Button("Apply##MenuScale"))
+                {
+                    Config.UI.MenuScale = _pendingMenuScale;
+                    RadarWindow.ApplyCustomImGuiStyle(); // Refresh ImGui style with new scale
+                }
+                if (!menuScaleDirty)
+                    ImGui.EndDisabled();
+
+                // Zoom
+                int zoom = Config.UI.Zoom;
+                if (ImGui.SliderInt("Zoom (F1/F2)", ref zoom, 1, 200))
+                {
+                    Config.UI.Zoom = zoom;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Map zoom level (lower = more zoomed in)");
+
+                // Aimline Length
+                int aimlineLength = Config.UI.AimLineLength;
+                if (ImGui.SliderInt("Aimline Length", ref aimlineLength, 0, 1500))
+                {
+                    Config.UI.AimLineLength = aimlineLength;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Length of player aim direction lines");
+
+                // Max Distance (snaps to nearest 25)
+                int maxDistanceRaw = (int)Config.UI.MaxDistance;
+                int maxDistance = (int)(MathF.Round(maxDistanceRaw / 25f) * 25);
+                if (ImGui.SliderInt("Max Distance", ref maxDistance, 50, 1500, "%d"))
+                {
+                    maxDistance = (int)(MathF.Round(maxDistance / 25f) * 25);
+                    maxDistance = Math.Clamp(maxDistance, 50, 1500);
+                    Config.UI.MaxDistance = maxDistance;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Maximum distance to render targets in aimview");
+
+                ImGui.SeparatorText("Widgets");
+
+                bool aimviewWidget = Config.AimviewWidget.Enabled;
+                if (ImGui.Checkbox("Aimview Widget", ref aimviewWidget))
+                {
+                    Config.AimviewWidget.Enabled = aimviewWidget;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("3D view showing players in your field of view");
+
+                bool infoWidget = Config.InfoWidget.Enabled;
+                if (ImGui.Checkbox("Player Info Widget", ref infoWidget))
+                {
+                    Config.InfoWidget.Enabled = infoWidget;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Displays a list of nearby players with details");
+
+                bool lootWidget = Config.LootWidget.Enabled;
+                if (ImGui.Checkbox("Loot Widget", ref lootWidget))
+                {
+                    Config.LootWidget.Enabled = lootWidget;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Displays a sortable table of filtered loot items");
+
+                ImGui.SeparatorText("Visibility");
+
+                bool showExfils = Config.UI.ShowExfils;
+                if (ImGui.Checkbox("Show Exfils", ref showExfils))
+                {
+                    Config.UI.ShowExfils = showExfils;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Show extraction points on the map");
+
+                bool showHazards = Config.UI.ShowHazards;
+                if (ImGui.Checkbox("Show Hazards", ref showHazards))
+                {
+                    Config.UI.ShowHazards = showHazards;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Show mines, sniper zones, and other hazards");
+
+                ImGui.EndTabItem();
+            }
+        }
+
+        private static void DrawPlayersTab()
+        {
+            if (ImGui.BeginTabItem("Players"))
+            {
+                ImGui.SeparatorText("Player Display");
+
+                bool teammateAimlines = Config.UI.TeammateAimlines;
+                if (ImGui.Checkbox("Teammate Aimlines", ref teammateAimlines))
+                {
+                    Config.UI.TeammateAimlines = teammateAimlines;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Show aim direction lines for teammates");
+
+                bool aiAimlines = Config.UI.AIAimlines;
+                if (ImGui.Checkbox("AI Aimlines", ref aiAimlines))
+                {
+                    Config.UI.AIAimlines = aiAimlines;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Show dynamic aim lines for AI players");
+
+                bool connectGroups = Program.Config.UI.ConnectGroups;
+                if (ImGui.Checkbox("Connect Groups", ref connectGroups))
+                {
+                    Program.Config.UI.ConnectGroups = connectGroups;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Draw lines between grouped players");
+
+                ImGui.SeparatorText("Misc");
+
+                bool autoGroups = Config.Misc.AutoGroups;
+                if (ImGui.Checkbox("Auto Groups", ref autoGroups))
+                {
+                    Config.Misc.AutoGroups = autoGroups;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Best-effort: automatically infer groups before raid start based on proximity");
+
+                ImGui.EndTabItem();
+            }
+        }
+
+        private static void DrawLootTab()
+        {
+            if (ImGui.BeginTabItem("Loot"))
+            {
+                ImGui.SeparatorText("Loot Settings");
+
+                bool lootEnabled = Config.Loot.Enabled;
+                if (ImGui.Checkbox("Show Loot (F3)", ref lootEnabled))
+                {
+                    Config.Loot.Enabled = lootEnabled;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Toggle loot display on the radar");
+
+                if (!lootEnabled)
+                {
+                    ImGui.BeginDisabled();
+                }
+
+                bool showWishlist = Config.Loot.ShowWishlist;
+                if (ImGui.Checkbox("Show Wishlist Items", ref showWishlist))
+                {
+                    Config.Loot.ShowWishlist = showWishlist;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Highlight items from your Tarkov wishlist");
+
+                if (!lootEnabled)
+                {
+                    ImGui.EndDisabled();
+                }
+
+                ImGui.EndTabItem();
+            }
+        }
+
+        private static void DrawContainersTab()
+        {
+            if (ImGui.BeginTabItem("Containers"))
+            {
+                bool containersEnabled = Config.Containers.Enabled;
+                if (ImGui.Checkbox("Show Containers", ref containersEnabled))
+                {
+                    Config.Containers.Enabled = containersEnabled;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Show lootable containers on the radar");
+
+                if (!containersEnabled)
+                {
+                    ImGui.BeginDisabled();
+                }
+
+                float drawDistance = Config.Containers.DrawDistance;
+                if (ImGui.SliderFloat("Draw Distance", ref drawDistance, 10, 500))
+                {
+                    Config.Containers.DrawDistance = drawDistance;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Maximum distance to show containers");
+
+                bool selectAll = Config.Containers.SelectAll;
+                if (ImGui.Checkbox("Select All", ref selectAll))
+                {
+                    Config.Containers.SelectAll = selectAll;
+                    if (_containerEntries is not null)
+                    {
+                        foreach (var entry in _containerEntries)
+                        {
+                            entry.IsTracked = selectAll;
+                        }
+                    }
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Toggle all container types");
+
+                ImGui.SeparatorText("Container Types");
+
+                if (_containerEntries is not null)
+                {
+                    ImGui.BeginChild("ContainerList", new Vector2(0, 200), ImGuiChildFlags.Borders);
+                    foreach (var entry in _containerEntries)
+                    {
+                        ImGui.PushID(entry.Id);
+                        bool isTracked = entry.IsTracked;
+                        if (ImGui.Checkbox(entry.Name, ref isTracked))
+                        {
+                            entry.IsTracked = isTracked;
+                        }
+                        ImGui.PopID();
+                    }
+                    ImGui.EndChild();
+                }
+
+                if (!containersEnabled)
+                {
+                    ImGui.EndDisabled();
+                }
+
+                ImGui.EndTabItem();
+            }
+        }
+
+        private static void DrawQuestHelperTab()
+        {
+            if (ImGui.BeginTabItem("Quest Helper"))
+            {
+                bool questHelperEnabled = Config.QuestHelper.Enabled;
+                if (ImGui.Checkbox("Enable Quest Helper", ref questHelperEnabled))
+                {
+                    Config.QuestHelper.Enabled = questHelperEnabled;
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Show quest objectives and items on the radar");
+
+                ImGui.SeparatorText("Active Quests");
+
+                if (Memory.QuestManager?.Quests is IReadOnlyDictionary<string, Tarkov.World.Quests.QuestEntry> quests)
+                {
+                    ImGui.BeginChild("QuestList", new Vector2(0, 200), ImGuiChildFlags.Borders);
+                    foreach (var quest in quests.Values.OrderBy(x => x.Name))
+                    {
+                        ImGui.PushID(quest.Id);
+                        bool isBlacklisted = Config.QuestHelper.BlacklistedQuests.ContainsKey(quest.Id);
+                        bool showQuest = !isBlacklisted;
+                        if (ImGui.Checkbox(quest.Name ?? quest.Id, ref showQuest))
+                        {
+                            if (showQuest)
+                                Config.QuestHelper.BlacklistedQuests.TryRemove(quest.Id, out _);
+                            else
+                                Config.QuestHelper.BlacklistedQuests.TryAdd(quest.Id, 0);
+                        }
+                        ImGui.PopID();
+                    }
+                    ImGui.EndChild();
+                }
+                else
+                {
+                    ImGui.TextColored(new Vector4(0.7f, 0.7f, 0.7f, 1f), "No active quests (not in raid)");
+                }
+
+                ImGui.EndTabItem();
+            }
+        }
+
+        private static void DrawAboutTab()
+        {
+            if (ImGui.BeginTabItem("About"))
+            {
+                ImGui.Text(Program.Name);
+                ImGui.Separator();
+                ImGui.TextWrapped("A DMA-based radar for Escape From Tarkov.");
+
+                ImGui.Spacing();
+                if (ImGui.Button("Visit Website"))
+                {
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo("https://lone-dma.org/") { UseShellExecute = true });
+                    }
+                    catch { }
+                }
+
+                ImGui.EndTabItem();
+            }
+        }
+
+        #region Helper Methods
+
+        private static void BackupConfig()
+        {
+            try
+            {
+                var backupFile = Path.Combine(Program.ConfigPath.FullName, $"{EftDmaConfig.Filename}.userbak");
+                File.WriteAllText(backupFile, JsonSerializer.Serialize(Program.Config, AppJsonContext.Default.EftDmaConfig));
+                MessageBox.Show(RadarWindow.Handle, $"Backed up to {backupFile}", "Backup Config", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(RadarWindow.Handle, $"Error: {ex.Message}", "Backup Config", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private static void OpenConfigFolder()
+        {
+            try
+            {
+                Process.Start(new ProcessStartInfo(Program.ConfigPath.FullName) { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(RadarWindow.Handle, $"Error: {ex.Message}", "Open Config", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        #endregion
+    }
+}
+

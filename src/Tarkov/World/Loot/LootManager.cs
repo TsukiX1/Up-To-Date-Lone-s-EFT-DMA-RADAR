@@ -1,0 +1,281 @@
+﻿/*
+ * Lone EFT DMA Radar - Copyright (c) 2026 Lone DMA
+ * Licensed under GNU AGPLv3. See https://www.gnu.org/licenses/agpl-3.0.html
+ */
+using Collections.Pooled;
+using LoneEftDmaRadar.Tarkov.Unity.Collections;
+using LoneEftDmaRadar.Tarkov.Unity.Structures;
+using LoneEftDmaRadar.UI.Loot;
+
+namespace LoneEftDmaRadar.Tarkov.World.Loot
+{
+    public sealed class LootManager
+    {
+        #region Fields/Properties/Constructor
+
+        private readonly ulong _gameWorld;
+        private readonly Lock _filterSync = new();
+        private readonly ConcurrentDictionary<ulong, LootItem> _loot = new();
+        private readonly HashSet<string> _loggedQuestItems = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// All loot (with filter applied).
+        /// </summary>
+        public IReadOnlyList<LootItem> FilteredLoot { get; private set; }
+        /// <summary>
+        /// All Static Containers on the map.
+        /// </summary>
+        public IEnumerable<StaticLootContainer> StaticContainers => _loot.Values.OfType<StaticLootContainer>();
+
+        public LootManager(ulong gameWorld)
+        {
+            _gameWorld = gameWorld;
+        }
+
+        #endregion
+
+        #region Public Methods
+
+        /// <summary>
+        /// Force a filter refresh.
+        /// Thread Safe.
+        /// </summary>
+        public void RefreshFilter()
+        {
+            if (_filterSync.TryEnter())
+            {
+                try
+                {
+                    var filter = LootFilter.Create();
+                    FilteredLoot = _loot.Values?
+                        .Where(x => filter(x))
+                        .OrderBy(x => x.Important)
+                        .ThenBy(x => x?.Price ?? 0)
+                        .ToList();
+                }
+                catch { }
+                finally
+                {
+                    _filterSync.Exit();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Refreshes loot, only call from a memory thread (Non-GUI).
+        /// </summary>
+        public void Refresh(CancellationToken ct)
+        {
+            try
+            {
+                GetLoot(ct);
+                RefreshFilter();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Logging.WriteLine($"CRITICAL ERROR - Failed to refresh loot: {ex}");
+            }
+        }
+
+        #endregion
+
+        #region Private Methods
+
+        /// <summary>
+        /// Updates referenced FilteredLoot List with fresh values.
+        /// </summary>
+        private void GetLoot(CancellationToken ct)
+        {
+            var lootListAddr = Memory.ReadPtr(_gameWorld + Offsets.GameWorld.LootList);
+            using var lootList = UnityList<ulong>.Create(
+                addr: lootListAddr,
+                useCache: true);
+            // Remove any loot no longer present
+            using var lootListHs = lootList.ToPooledSet();
+            foreach (var existing in _loot.Keys)
+            {
+                if (!lootListHs.Contains(existing))
+                {
+                    _ = _loot.TryRemove(existing, out _);
+                }
+            }
+            // Proceed to get new loot
+            using var map = Memory.CreateScatterMap();
+            var round1 = map.AddRound();
+            var round2 = map.AddRound();
+            var round3 = map.AddRound();
+            var round4 = map.AddRound();
+            foreach (var lootBase in lootList)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (_loot.ContainsKey(lootBase))
+                {
+                    continue; // Already processed this loot item once before
+                }
+                round1.PrepareReadPtr(lootBase + ObjectClass.MonoBehaviourOffset); // UnityComponent
+                round1.PrepareReadPtr(lootBase + ObjectClass.To_NamePtr[0]); // C1
+                round1.Completed += (sender, s1) =>
+                {
+                    if (s1.ReadPtr(lootBase + ObjectClass.MonoBehaviourOffset, out var monoBehaviour) &&
+                        s1.ReadPtr(lootBase + ObjectClass.To_NamePtr[0], out var c1))
+                    {
+                        round2.PrepareReadPtr(monoBehaviour + UnityOffsets.Component_ObjectClassOffset); // InteractiveClass
+                        round2.PrepareReadPtr(monoBehaviour + UnityOffsets.Component_GameObjectOffset); // GameObject
+                        round2.PrepareReadPtr(c1 + ObjectClass.To_NamePtr[1]); // C2
+                        round2.Completed += (sender, s2) =>
+                        {
+                            if (s2.ReadPtr(monoBehaviour + UnityOffsets.Component_ObjectClassOffset, out var interactiveClass) &&
+                                s2.ReadPtr(monoBehaviour + UnityOffsets.Component_GameObjectOffset, out var gameObject) &&
+                                s2.ReadPtr(c1 + ObjectClass.To_NamePtr[1], out var classNamePtr))
+                            {
+                                round3.PrepareRead(classNamePtr, 64); // ClassName
+                                round3.PrepareReadPtr(gameObject + UnityOffsets.GameObject_ComponentsOffset); // Components
+                                round3.PrepareReadPtr(gameObject + UnityOffsets.GameObject_NameOffset); // PGameObjectName
+                                round3.Completed += (sender, s3) =>
+                                {
+                                    if (s3.ReadString(classNamePtr, 64, Encoding.UTF8) is string className &&
+                                        s3.ReadPtr(gameObject + UnityOffsets.GameObject_ComponentsOffset, out var components)
+                                        && s3.ReadPtr(gameObject + UnityOffsets.GameObject_NameOffset, out var pGameObjectName))
+                                    {
+                                        round4.PrepareRead(pGameObjectName, 64); // ObjectName
+                                        round4.PrepareReadPtr(components + 0x8); // T1
+                                        round4.Completed += (sender, s4) =>
+                                        {
+                                            if (
+                                                s4.ReadString(pGameObjectName, 64, Encoding.UTF8) is string objectName &&
+                                                s4.ReadPtr(components + 0x8, out var transformInternal))
+                                            {
+                                                map.Completed += (sender, _) => // Store this as callback, let scatter reads all finish first (benchmarked faster)
+                                                {
+                                                    ct.ThrowIfCancellationRequested();
+                                                    try
+                                                    {
+                                                        var @params = new LootIndexParams
+                                                        {
+                                                            ItemBase = lootBase,
+                                                            InteractiveClass = interactiveClass,
+                                                            ObjectName = objectName,
+                                                            TransformInternal = transformInternal,
+                                                            ClassName = className
+                                                        };
+                                                        ProcessLootIndex(ref @params);
+                                                    }
+                                                    catch
+                                                    {
+                                                    }
+                                                };
+                                            }
+                                        };
+                                    }
+                                };
+                            }
+                        };
+                    }
+                };
+            }
+            map.Execute(); // execute scatter read
+            // Post Scatter Read - Sync Corpses
+            var deadPlayers = Memory.Players?
+                .Where(x => x.Corpse is not null)?.ToList();
+            foreach (var corpse in _loot.Values.OfType<LootCorpse>())
+            {
+                corpse.Sync(deadPlayers);
+            }
+        }
+
+        /// <summary>
+        /// Process a single loot index.
+        /// </summary>
+        private void ProcessLootIndex(ref LootIndexParams p)
+        {
+            var isCorpse = p.ClassName.Contains("Corpse", StringComparison.OrdinalIgnoreCase);
+            var isLooseLoot = p.ClassName.Equals("ObservedLootItem", StringComparison.OrdinalIgnoreCase);
+            var isContainer = p.ClassName.Equals("LootableContainer", StringComparison.OrdinalIgnoreCase);
+            var interactiveClass = p.InteractiveClass;
+
+            if (p.ObjectName.Contains("script", StringComparison.OrdinalIgnoreCase))
+            {
+                // skip these
+            }
+            else
+            {
+                // Get Item Position
+                var pos = new UnityTransform(p.TransformInternal, true).UpdatePosition();
+                if (isCorpse)
+                {
+                    var corpse = new LootCorpse(interactiveClass, pos);
+                    _ = _loot.TryAdd(p.ItemBase, corpse);
+                }
+                else if (isContainer)
+                {
+                    try
+                    {
+                        if (p.ObjectName.Equals("loot_collider", StringComparison.OrdinalIgnoreCase))
+                        {
+                            _ = _loot.TryAdd(p.ItemBase, new LootAirdrop(pos));
+                        }
+                        else
+                        {
+                            var itemOwner = Memory.ReadPtr(interactiveClass + Offsets.LootableContainer.ItemOwner);
+                            var ownerItemBase = Memory.ReadPtr(itemOwner + Offsets.ItemController.RootItem);
+                            var ownerItemTemplate = Memory.ReadPtr(ownerItemBase + Offsets.LootItem.Template);
+                            var ownerItemMongoId = Memory.ReadValue<MongoID>(ownerItemTemplate + Offsets.ItemTemplate._id);
+                            var ownerItemId = ownerItemMongoId.ReadString();
+                            _ = _loot.TryAdd(p.ItemBase, new StaticLootContainer(ownerItemId, pos));
+                        }
+                    }
+                    catch
+                    {
+                    }
+                }
+                else if (isLooseLoot)
+                {
+                    var item = Memory.ReadPtr(interactiveClass + Offsets.InteractiveLootItem._item); //EFT.InventoryLogic.Item
+                    var itemTemplate = Memory.ReadPtr(item + Offsets.LootItem.Template); //EFT.InventoryLogic.ItemTemplate
+                    var isQuestItem = Memory.ReadValue<bool>(itemTemplate + Offsets.ItemTemplate.QuestItem);
+
+                    var mongoId = Memory.ReadValue<MongoID>(itemTemplate + Offsets.ItemTemplate._id);
+                    var id = mongoId.ReadString();
+                    if (isQuestItem)
+                    {
+                        if (!_loggedQuestItems.Contains(id))
+                        {
+                            var shortNamePtr = Memory.ReadPtr(itemTemplate + Offsets.ItemTemplate.ShortName);
+                            var shortName = Memory.ReadUnityString(shortNamePtr, 128);
+                            if (shortName.Any(c => c > 127))
+                            {
+                                shortName = id.Length > 8 ? id[^8..] : id; // Edge case some shortnames are russki
+                            }
+                            _ = _loot.TryAdd(p.ItemBase, new LootItem(id, $"Q_{shortName}", pos) { IsQuestItem = true });
+                            _loggedQuestItems.Add(id);
+                        }
+                    }
+                    else
+                    {
+                        //If NOT a quest item. Quest items are like the quest related things you need to find like the pocket watch or Jaeger's Letter etc. We want to ignore these quest items.
+                        if (TarkovDataManager.AllItems.TryGetValue(id, out var entry))
+                        {
+                            _ = _loot.TryAdd(p.ItemBase, new LootItem(entry, pos));
+                        }
+                    }
+                }
+            }
+        }
+
+        private readonly struct LootIndexParams
+        {
+            public ulong ItemBase { get; init; }
+            public ulong InteractiveClass { get; init; }
+            public string ObjectName { get; init; }
+            public ulong TransformInternal { get; init; }
+            public string ClassName { get; init; }
+        }
+
+        #endregion
+
+    }
+}

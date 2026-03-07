@@ -1,0 +1,70 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>LoneEftDmaRadar</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>warnings</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <Platforms>x64</Platforms>
+	<ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+	<ApplicationIcon>Resources\lone-icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+	<!-- SignalR AOT Compatibility -->
+	<ItemGroup>
+		<RuntimeHostConfigurationOption Include="Microsoft.AspNetCore.SignalR.Hub.IsCustomAwaitableSupported" Value="false" Trim="true" />
+	</ItemGroup>
+
+	<!-- Native AOT -->
+	<PropertyGroup>
+		<PublishAot>true</PublishAot>
+		<PublishTrimmed>true</PublishTrimmed>
+		<EnableAotAnalyzer>true</EnableAotAnalyzer>
+		<EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+		<EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+		<MetricsSupport>false</MetricsSupport>
+		<MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+		<EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
+		<EnableUnsafeUTF7Encoding>false</EnableUnsafeUTF7Encoding>
+		<HighEntropyVA>true</HighEntropyVA>
+		<DebuggerSupport>false</DebuggerSupport> <!-- Also removes symbols -->
+		<StackTraceSupport>true</StackTraceSupport>
+		<ControlFlowGuard>Guard</ControlFlowGuard>
+		<CetCompat>true</CetCompat>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+		<DebugType>none</DebugType>
+		<DebugSymbols>false</DebugSymbols>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+		<DebugType>none</DebugType>
+		<DebugSymbols>false</DebugSymbols>
+	</PropertyGroup>
+	
+	<ItemGroup>
+		<EmbeddedResource Include="Resources\**\*.*" />
+	</ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ImGui.NET" Version="1.91.6.1" />
+    <PackageReference Include="MemoryPack" Version="1.21.4" />
+    <PackageReference Include="Silk.NET.Input" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.OpenGL.Extensions.ImGui" Version="2.23.0" />
+    <PackageReference Include="Silk.NET.Windowing" Version="2.23.0" />
+    <PackageReference Include="SkiaSharp" Version="3.119.2" />
+	<PackageReference Include="Collections.Pooled.V2" Version="2.3.1" />
+	<PackageReference Include="Microsoft.Extensions.Http.Resilience" Version="10.3.0" />
+	<PackageReference Include="Svg.Skia" Version="3.4.1" />
+	<PackageReference Include="Velopack" Version="0.0.1298" />
+	<PackageReference Include="VmmSharpEx" Version="3.200.12" />
+	<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	<PackageReference Include="Open.Nat.V2" Version="3.2.1" />
+  </ItemGroup>
+
+</Project>
