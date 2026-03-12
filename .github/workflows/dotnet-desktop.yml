@@ -73,7 +73,7 @@ jobs:
             --packId github.eftdma.radar `
             --packVersion "${{ steps.nbgv.outputs.SemVer2 }}" `
             --packDir "out" `
-            --mainExe "EFT-DMA-Radar.exe" `
+            --mainExe "Lone-EFT-DMA-Radar.exe" `
             --packTitle "EFT DMA Radar" `
             --icon "src/Resources/lone-icon.ico"
 
