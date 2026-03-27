@@ -4,211 +4,200 @@ namespace SDK
     {
         public readonly partial struct GameWorld
         {
-            public const uint GameDateTime = 0xD8;
-            public const uint SynchronizableObjectLogicProcessor = 0x248;
-        }
-
-        public readonly partial struct ClientLocalGameWorld
-        {
-            public const uint BtrController = 0x28;
-            public const uint TransitController = 0x38;
-            public const uint ExfilController = 0x58;
-            public const uint ClientShellingController = 0xA8;
-            public const uint LocationId = 0xD0;
-            public const uint LootList = 0x198;
-            public const uint RegisteredPlayers = 0x1B8;
-            public const uint BorderZones = 0x1F0;
-            public const uint MainPlayer = 0x210;
-            public const uint World = 0x218;
-            public const uint SynchronizableObjectLogicProcessor = 0x248;
-            public const uint Grenades = 0x288;
+            public const uint BtrController = 0x28; // object
+            public const uint LocationId = 0xD0; // string
+            public const uint LootList = 0x198; // object
+            public const uint RegisteredPlayers = 0x1B8; // object
+            public const uint MainPlayer = 0x210; // object
+            public const uint SynchronizableObjectLogicProcessor = 0x248; // object
+            public const uint Grenades = 0x288; // object
         }
 
         public readonly partial struct SynchronizableObject
         {
-            public const uint Type = 0x68;
+            public const uint Type = 0x68; // object [cite: 7193, 7200]
         }
 
         public readonly partial struct SynchronizableObjectLogicProcessor
         {
-            public const uint _staticSynchronizableObjects = 0x18;
+            public const uint _staticSynchronizableObjects = 0x18; // object
         }
 
         public readonly partial struct TripwireSynchronizableObject
         {
-            public const uint _tripwireState = 0xE4;
-            public const uint ToPosition = 0x158;
+            public const uint _tripwireState = 0xE4; // object
+            public const uint ToPosition = 0x158; // object
         }
 
         public readonly partial struct BtrController
         {
-            public const uint BtrView = 0x50;
+            public const uint BtrView = 0x50; // object
         }
 
         public readonly partial struct BTRView
         {
-            public const uint turret = 0x60;
-            public const uint _previousPosition = 0xB4;
+            public const uint turret = 0x60; // object
+            public const uint _previousPosition = 0xB4; // object
         }
 
         public readonly partial struct BTRTurretView
         {
-            public const uint _bot = 0x60;
+            public const uint _bot = 0x60; // object
         }
 
         public readonly partial struct Throwable
         {
-            public const uint _isDestroyed = 0x4D;
+            public const uint _isDestroyed = 0x4D; // bool
         }
 
         public readonly partial struct Player
         {
-            public const uint MovementContext = 0x60;
-            public const uint _playerBody = 0x190;
-            public const uint GameWorld = 0x5F8;
-            public const uint Corpse = 0x680;
-            public const uint Location = 0x870;
-            public const uint Profile = 0x900;
-            public const uint _handsController = 0x980;
-            public const uint _playerLookRaycastTransform = 0xA08;
+            public const uint MovementContext = 0x60; // object
+            public const uint _playerBody = 0x190; // object
+            public const uint GameWorld = 0x5F8; // object
+            public const uint Corpse = 0x680; // object
+            public const uint Location = 0x870; // string
+            public const uint Profile = 0x900; // object
+            public const uint _handsController = 0x980; // object
+            public const uint _playerLookRaycastTransform = 0xA08; // object
         }
 
         public readonly partial struct ObservedPlayerView
         {
-            public const uint ObservedPlayerController = 0x28;
-            public const uint Voice = 0x40;
-            public const uint Id = 0x7C;
-            public const uint Side = 0x94;
-            public const uint IsAI = 0xA0;
-            public const uint PlayerBody = 0xD8;
+            public const uint ObservedPlayerController = 0x28; // object
+            public const uint Voice = 0x40; // string
+            public const uint Id = 0x7C; // int32_t
+            public const uint Side = 0x94; // object
+            public const uint IsAI = 0xA0; // bool
+            public const uint PlayerBody = 0xD8; // object
         }
 
         public readonly partial struct ObservedPlayerController
         {
-            public const uint InventoryController = 0x10;
-            public const uint PlayerView = 0x18;
-            public const uint MovementController = 0xD8;
-            public const uint HealthController = 0xE8;
-            public const uint HandsController = 0x120;
+            public const uint InventoryController = 0x10; // object
+            public const uint PlayerView = 0x18; // object
+            public const uint MovementController = 0xD8; // object
+            public const uint HealthController = 0xE8; // object
+            public const uint HandsController = 0x120; // object
         }
 
         public readonly partial struct ObservedPlayerHandsController
         {
-            public const uint _item = 0x58;
+            public const uint _item = 0x58; // object
         }
 
         public readonly partial struct InventoryController
         {
-            public const uint Inventory = 0x100;
+            public const uint Inventory = 0x100; // object
         }
 
         public readonly partial struct Inventory
         {
-            public const uint Equipment = 0x18;
+            public const uint Equipment = 0x18; // object
         }
 
         public readonly partial struct InventoryEquipment
         {
-            public const uint _cachedSlots = 0x90;
+            public const uint _cachedSlots = 0x90; // object
         }
 
         public readonly partial struct Slot
         {
-            public const uint ContainedItem = 0x48;
-            public const uint ID = 0x58;
+            public const uint ContainedItem = 0x48; // object
+            public const uint ID = 0x58; // string
         }
 
         public readonly partial struct ObservedPlayerMovementController
         {
-            public const uint ObservedPlayerStateContext = 0x98;
+            public const uint ObservedPlayerStateContext = 0x98; // object
         }
 
         public readonly partial struct ObservedPlayerStateContext
         {
-            public const uint Rotation = 0x20;
+            public const uint Rotation = 0x20; // object
         }
 
         public readonly partial struct ObservedHealthController
         {
-            public const uint HealthStatus = 0x10;
-            public const uint _player = 0x18;
-            public const uint _playerCorpse = 0x20;
+            public const uint HealthStatus = 0x10; // object
+            public const uint _player = 0x18; // object
+            public const uint _playerCorpse = 0x20; // object
         }
 
         public readonly partial struct Profile
         {
-            public const uint Id = 0x10;
-            public const uint AccountId = 0x18;
-            public const uint Info = 0x48;
-            public const uint QuestsData = 0x98;
-            public const uint WishlistManager = 0x108;
+            public const uint Id = 0x10; // string
+            public const uint AccountId = 0x18; // string
+            public const uint Info = 0x48; // object
+            public const uint QuestsData = 0x98; // object
+            public const uint WishlistManager = 0x108; // object
         }
 
         public readonly partial struct WishlistManager
         {
-            public const uint _wishlistItems = 0x28;
+            public const uint _wishlistItems = 0x28; // object
         }
 
         public readonly partial struct PlayerInfo
         {
-            public const uint Side = 0x48;
-            public const uint RegistrationDate = 0x4C;
-            public const uint GroupId = 0x50;
+            public const uint Side = 0x48; // object
+            public const uint RegistrationDate = 0x4C; // int32_t
+            public const uint GroupId = 0x50; // string
         }
 
         public readonly partial struct QuestsData
         {
-            public const uint Id = 0x10;
-            public const uint Status = 0x1C;
-            public const uint CompletedConditions = 0x28;
+            public const uint Id = 0x10; // string
+            public const uint Status = 0x1C; // object
+            public const uint CompletedConditions = 0x28; // object
         }
 
         public readonly partial struct MovementContext
         {
-            public const uint _player = 0x48;
-            public const uint _rotation = 0xC8;
+            public const uint _player = 0x48; // object
+            public const uint _rotation = 0xC8; // object
         }
 
         public readonly partial struct InteractiveLootItem
         {
-            public const uint _item = 0xF0;
+            public const uint _item = 0xF0; // object
         }
 
         public readonly partial struct DizSkinningSkeleton
         {
-            public const uint _values = 0x30;
+            public const uint _values = 0x30; // object
         }
 
         public readonly partial struct LootableContainer
         {
-            public const uint ItemOwner = 0x168;
+            public const uint ItemOwner = 0x168; // object
         }
 
         public readonly partial struct ItemController
         {
-            public const uint RootItem = 0xD0;
+            public const uint RootItem = 0xD0; // object
         }
 
         public readonly partial struct LootItem
         {
-            public const uint Template = 0x60;
+            public const uint Template = 0x60; // object
         }
 
         public readonly partial struct ItemTemplate
         {
-            public const uint ShortName = 0x18;
-            public const uint QuestItem = 0x34;
-            public const uint _id = 0xE0;
+            public const uint ShortName = 0x18; // string
+            public const uint QuestItem = 0x34; // bool
+            public const uint _id = 0xE0; // object
         }
 
         public readonly partial struct PlayerBody
         {
-            public const uint SkeletonRootJoint = 0x30;
+            public const uint SkeletonRootJoint = 0x30; // object
         }
 
         public readonly partial struct GamePlayerOwner
         {
-            public const uint _myPlayer = 0x8;
+            public const uint _myPlayer = 0x8; // object
         }
     }
 
