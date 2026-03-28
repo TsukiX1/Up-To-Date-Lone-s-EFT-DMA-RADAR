@@ -42,6 +42,11 @@ namespace LoneEftDmaRadar.UI
         private static GRBackendRenderTarget _skBackendRenderTarget = null!;
         private static readonly RateLimiter _purgeRL = new(TimeSpan.FromSeconds(1));
 
+        // Responsiveness monitor
+        private static CancellationTokenSource? _responsivenessCts;
+        private const int ResponsivenessTimeoutMs = 2000; // report if dispatcher doesn't respond within this
+        private const int RenderWarningMs = 250; // log if a single render frame takes longer than this
+
         private static float RadarScale => Config.UI.RadarScale;
 
         private static EftDmaConfig Config { get; } = Program.Config;
@@ -188,6 +193,10 @@ namespace LoneEftDmaRadar.UI
             // Start FPS timer
             _ = RunFpsTimerAsync();
 
+            // Start responsiveness monitor (background task)
+            _responsivenessCts = new CancellationTokenSource();
+            _ = Task.Run(() => ResponsivenessMonitorAsync(_responsivenessCts.Token));
+
             // Ready
             Program.UpdateState(AppState.ProcessNotStarted);
         }
@@ -306,6 +315,7 @@ namespace LoneEftDmaRadar.UI
                 return;
             try
             {
+                var renderStart = Stopwatch.GetTimestamp();
                 // Frame Setup
                 Interlocked.Increment(ref _fpsCounter);
                 _grContext.ResetContext();
@@ -325,6 +335,12 @@ namespace LoneEftDmaRadar.UI
                     AimviewWidget.Render();
                     // UI Render (ImGui)
                     DrawImGuiUI(ref fbSize, delta);
+                }
+                var renderEnd = Stopwatch.GetTimestamp();
+                var renderMs = Stopwatch.GetElapsedTime(renderStart, renderEnd).TotalMilliseconds;
+                if (renderMs > RenderWarningMs)
+                {
+                    Logging.WriteLine($"[Performance] Long render frame: {renderMs:F1}ms");
                 }
             }
             catch (Exception ex)
@@ -908,6 +924,40 @@ namespace LoneEftDmaRadar.UI
 
             Config.UI.WindowMaximized = _window.WindowState == WindowState.Maximized;
             // CurrentDomain_ProcessExit will execute after this point
+            try
+            {
+                _responsivenessCts?.Cancel();
+                _responsivenessCts?.Dispose();
+                _responsivenessCts = null;
+            }
+            catch { }
+        }
+
+        private static async Task ResponsivenessMonitorAsync(CancellationToken ct)
+        {
+            try
+            {
+                var sw = new Stopwatch();
+                while (!ct.IsCancellationRequested)
+                {
+                    sw.Restart();
+                    // Post a small action to the UI thread and await completion
+                    var t = Dispatcher.InvokeAsync(() => { });
+                    var timeout = Task.Delay(ResponsivenessTimeoutMs, ct);
+                    var completed = await Task.WhenAny(t, timeout);
+                    if (completed == timeout)
+                    {
+                        Logging.WriteLine($"[Responsiveness] Dispatcher did not respond within {ResponsivenessTimeoutMs}ms. Elapsed: {sw.ElapsedMilliseconds}ms");
+                    }
+                    // Sleep a short interval before next check
+                    await Task.Delay(1000, ct);
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex)
+            {
+                Logging.WriteLine($"[Responsiveness] Monitor crashed: {ex}");
+            }
         }
 
         private static void OnMouseDown(IMouse mouse, MouseButton button)
