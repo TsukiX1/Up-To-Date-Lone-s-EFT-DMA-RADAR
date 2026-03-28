@@ -4,8 +4,8 @@ namespace SDK
     {
         public readonly partial struct GameWorld
         {
-            public const uint BtrController = 0x28; // object
-            public const uint LocationId = 0xD0; // string
+            public const uint BtrController = 0x28; // <BtrController>k__BackingField
+            public const uint LocationId = 0xD0; // <LocationId>k__BackingField
             public const uint LootList = 0x198; // object
             public const uint RegisteredPlayers = 0x1B8; // object
             public const uint MainPlayer = 0x210; // object
@@ -15,7 +15,7 @@ namespace SDK
 
         public readonly partial struct SynchronizableObject
         {
-            public const uint Type = 0x68; // object [cite: 7193, 7200]
+            public const uint Type = 0x68; // object
         }
 
         public readonly partial struct SynchronizableObjectLogicProcessor
@@ -56,10 +56,10 @@ namespace SDK
             public const uint _playerBody = 0x190; // object
             public const uint GameWorld = 0x5F8; // object
             public const uint Corpse = 0x680; // object
-            public const uint Location = 0x870; // string
-            public const uint Profile = 0x900; // object
-            public const uint _handsController = 0x980; // object
-            public const uint _playerLookRaycastTransform = 0xA08; // object
+            public const uint Location = 0x878; // string
+            public const uint Profile = 0x908; // object
+            public const uint _handsController = 0x988; // object
+            public const uint _playerLookRaycastTransform = 0xA18; // object
         }
 
         public readonly partial struct ObservedPlayerView
@@ -114,7 +114,7 @@ namespace SDK
 
         public readonly partial struct ObservedPlayerStateContext
         {
-            public const uint Rotation = 0x20; // object
+            public const uint Rotation = 0x28; // object
         }
 
         public readonly partial struct ObservedHealthController
@@ -135,7 +135,7 @@ namespace SDK
 
         public readonly partial struct WishlistManager
         {
-            public const uint _wishlistItems = 0x28; // object
+            public const uint _wishlistItems = 0x30; // object
         }
 
         public readonly partial struct PlayerInfo
@@ -154,8 +154,8 @@ namespace SDK
 
         public readonly partial struct MovementContext
         {
-            public const uint _player = 0x48; // object
-            public const uint _rotation = 0xC8; // object
+            public const uint _player = 0x40; // object
+            public const uint _rotation = 0xC0; // object
         }
 
         public readonly partial struct InteractiveLootItem
@@ -197,7 +197,7 @@ namespace SDK
 
         public readonly partial struct GamePlayerOwner
         {
-            public const uint _myPlayer = 0x8; // object
+            public const uint _myPlayer = 0x08; // object
         }
     }
 
@@ -213,59 +213,23 @@ namespace SDK
         [Flags]
         public enum ETagStatus
         {
-            Unaware = 1,
-            Aware = 2,
-            Combat = 4,
-            Solo = 8,
-            Coop = 16,
-            Bear = 32,
-            Usec = 64,
-            Scav = 128,
-            TargetSolo = 256,
-            TargetMultiple = 512,
-            Healthy = 1024,
-            Injured = 2048,
-            BadlyInjured = 4096,
-            Dying = 8192,
-            Birdeye = 16384,
-            Knight = 32768,
-            BigPipe = 65536,
-            BlackDivision = 131072,
-            VSRF = 262144,
+            Unaware = 1, aware = 2, Combat = 4, Solo = 8, Coop = 16, Bear = 32, Usec = 64, Scav = 128, TargetSolo = 256, TargetMultiple = 512, Healthy = 1024, Injured = 2048, BadlyInjured = 4096, Dying = 8192, Birdeye = 16384, Knight = 32768, BigPipe = 65536, BlackDivision = 131072, VSRF = 262144,
         }
 
         [Flags]
         public enum EMemberCategory
         {
-            Default = 0,
-            Developer = 1,
-            UniqueId = 2,
-            Trader = 4,
-            Group = 8,
-            System = 16,
-            ChatModerator = 32,
-            ChatModeratorWithPermanentBan = 64,
-            UnitTest = 128,
-            Sherpa = 256,
-            Emissary = 512,
-            Unheard = 1024,
+            Default = 0, Developer = 1, UniqueId = 2, Trader = 4, Group = 8, System = 16, ChatModerator = 32, ChatModeratorWithPermanentBan = 64, UnitTest = 128, Sherpa = 256, Emissary = 512, Unheard = 1024,
         }
 
         public enum SynchronizableObjectType
         {
-            AirDrop = 0,
-            AirPlane = 1,
-            Tripwire = 2,
+            AirDrop = 0, AirPlane = 1, Tripwire = 2,
         }
 
         public enum ETripwireState
         {
-            None = 0,
-            Wait = 1,
-            Active = 2,
-            Exploding = 3,
-            Exploded = 4,
-            Inert = 5,
+            None = 0, Wait = 1, Active = 2, Exploding = 3, Exploded = 4, Inert = 5,
         }
     }
 }
