@@ -165,6 +165,21 @@ namespace LoneEftDmaRadar.Tarkov.World.Player
         /// <param name="groupId"></param>
         public void AssignGroup(int groupId)
         {
+            try
+            {
+                // Prevent changing groups after raid has been locked (>30 seconds after start)
+                if ((_gameWorld is not null && _gameWorld.RaidStartedAt.HasValue &&
+                    DateTime.UtcNow - _gameWorld.RaidStartedAt.Value > TimeSpan.FromSeconds(30)) ||
+                    (Config.Cache.RaidCache?.GroupsLocked == true))
+                {
+                    // If already in requested group, allow (no-op). Otherwise ignore.
+                    if (GroupId == groupId)
+                        return;
+                    Logging.WriteLine($"[ObservedPlayer] AssignGroup ignored for player {Id} - groups locked.");
+                    return;
+                }
+            }
+            catch { }
             GroupId = groupId;
         }
 
@@ -174,6 +189,23 @@ namespace LoneEftDmaRadar.Tarkov.World.Player
         /// <param name="isTeammate">True if the Player is a Teammate, otherwise false.</param>
         public void AssignTeammate(bool isTeammate)
         {
+            try
+            {
+                if ((_gameWorld is not null && _gameWorld.RaidStartedAt.HasValue &&
+                    DateTime.UtcNow - _gameWorld.RaidStartedAt.Value > TimeSpan.FromSeconds(30)) ||
+                    (Config.Cache.RaidCache?.GroupsLocked == true))
+                {
+                    // If already in the desired teammate state, allow; otherwise ignore changes.
+                    if (isTeammate && Type == PlayerType.Teammate)
+                        return;
+                    if (!isTeammate && (Type == PlayerType.PMC || Type == PlayerType.PScav))
+                        return;
+                    Logging.WriteLine($"[ObservedPlayer] AssignTeammate ignored for player {Id} - groups locked.");
+                    return;
+                }
+            }
+            catch { }
+
             if (isTeammate)
             {
                 Type = PlayerType.Teammate;

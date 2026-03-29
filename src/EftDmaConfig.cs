@@ -581,6 +581,11 @@ namespace LoneEftDmaRadar
         [JsonPropertyName("spawnPositions")]
         public ConcurrentDictionary<int, string> SpawnPositions { get; set; } = new();
         /// <summary>
+        /// If true, groups are locked for this raid and further changes are ignored.
+        /// </summary>
+        [JsonPropertyName("groupsLocked")]
+        public bool GroupsLocked { get; set; } = false;
+        /// <summary>
         /// Defines players that have been 'focused' by the user (Right-Click on radar icon).
         /// Key: Player Id | Value: no-op
         /// </summary>

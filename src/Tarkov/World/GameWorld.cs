@@ -58,6 +58,10 @@ namespace LoneEftDmaRadar.Tarkov.World
         public IReadOnlyCollection<IExitPoint> Exits { get; }
         public IReadOnlyCollection<IWorldHazard> Hazards { get; }
         public bool RaidStarted { get; private set; }
+        /// <summary>
+        /// UTC timestamp when raid was detected as started. Null if raid not started yet.
+        /// </summary>
+        public DateTime? RaidStartedAt { get; private set; }
 
         private GameWorld() { }
 
@@ -115,6 +119,8 @@ namespace LoneEftDmaRadar.Tarkov.World
                 if (RaidStarted)
                 {
                     Logging.WriteLine("[GameWorld] Raid has already started!");
+                    // Record raid start timestamp so later logic can enforce the grouping lock window
+                    RaidStartedAt = DateTime.UtcNow;
                 }
             }
             catch
@@ -368,6 +374,8 @@ namespace LoneEftDmaRadar.Tarkov.World
                 if (RaidStarted)
                 {
                     Logging.WriteLine("[PreRaidStartChecks] Raid has started!");
+                    // Record when the raid was detected as started
+                    RaidStartedAt = DateTime.UtcNow;
                 }
                 if (!RaidStarted && !localPlayer.IsScav)
                 {
@@ -446,9 +454,9 @@ namespace LoneEftDmaRadar.Tarkov.World
         {
             ct.ThrowIfCancellationRequested();
 
-            // Group players together if they are within this distance (meters).
-            // Increased to 30m so PMCs that spawn near each other are grouped.
-            const float groupDistanceThreshold = 30f;
+            // Grouping should only be performed at raid start or when a player connects.
+            // Do NOT form groups based on runtime proximity (players moving within 30m).
+            const float spawnDistanceThreshold = 30f;
 
             // Build new assignments in a local dict
             var newGroups = new ConcurrentDictionary<int, int>();
@@ -458,7 +466,7 @@ namespace LoneEftDmaRadar.Tarkov.World
 
             // Collect all valid human pmc players
             var players = _rgtPlayers
-                .Where(p => p.IsHuman && p.IsPmc && p.Position.IsNormal())
+                .Where(p => p.IsHuman && p.IsPmc)
                 .OfType<ObservedPlayer>()
                 .ToList();
 
@@ -468,61 +476,6 @@ namespace LoneEftDmaRadar.Tarkov.World
                 Config.Cache.RaidCache.Groups = newGroups;
                 return;
             }
-
-            // Include LocalPlayer as a node
-            const int localId = int.MinValue;
-            var allNodes = new Dictionary<int, Vector3>
-            {
-                [localId] = localPlayer.Position
-            };
-
-            foreach (var p in players)
-                allNodes[p.Id] = p.Position;
-
-            // Union-Find
-            var parent = allNodes.Keys.ToDictionary(id => id, id => id);
-
-            int Find(int id)
-            {
-                if (parent[id] != id)
-                    parent[id] = Find(parent[id]);
-                return parent[id];
-            }
-
-            void Union(int a, int b)
-            {
-                var ra = Find(a);
-                var rb = Find(b);
-                if (ra != rb)
-                    parent[ra] = rb;
-            }
-
-            // Build proximity graph
-            var ids = allNodes.Keys.ToList();
-            for (int i = 0; i < ids.Count; i++)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                for (int j = i + 1; j < ids.Count; j++)
-                {
-                    if (Vector3.Distance(allNodes[ids[i]], allNodes[ids[j]]) <= groupDistanceThreshold)
-                        Union(ids[i], ids[j]);
-                }
-            }
-
-            // Build components (excluding LocalPlayer for now)
-            var components = new Dictionary<int, List<ObservedPlayer>>();
-            foreach (var p in players)
-            {
-                var root = Find(p.Id);
-                if (!components.TryGetValue(root, out var list))
-                    components[root] = list = [];
-                list.Add(p);
-            }
-
-            // Assign group IDs
-            int nextGroupId = 1;
-            var localRoot = Find(localId);
 
             if (!allowForming)
             {
@@ -569,6 +522,7 @@ namespace LoneEftDmaRadar.Tarkov.World
             }
 
             // Determine nextGroupId based on existing groups to avoid collisions
+            int nextGroupId = 1;
             int maxExisting = oldGroups.Values
                 .Where(v => v > 0 && v != AbstractPlayer.TeammateGroupId && v != AbstractPlayer.SoloGroupId)
                 .DefaultIfEmpty(0)
@@ -577,135 +531,133 @@ namespace LoneEftDmaRadar.Tarkov.World
 
             var spawnPositions = Config.Cache.RaidCache?.SpawnPositions;
 
-            foreach (var component in components.Values)
+            // If spawn positions are available, form groups by spawn proximity only.
+            if (spawnPositions is not null && spawnPositions.Count > 0)
             {
-                ct.ThrowIfCancellationRequested();
-
-                var componentRoot = Find(component[0].Id);
-                bool containsLocal = componentRoot == localRoot;
-
-                if (containsLocal)
+                // Build map of player id -> spawn position (when available)
+                var spawnMap = new Dictionary<int, Vector3>();
+                foreach (var p in players)
                 {
-                    foreach (var p in component)
+                    try
                     {
-                        newGroups[p.Id] = AbstractPlayer.TeammateGroupId;
-                        p.AssignTeammate(true);
+                        if (spawnPositions.TryGetValue(p.Id, out var s) && !string.IsNullOrEmpty(s))
+                        {
+                            var parts = s.Split(';');
+                            if (parts.Length == 3 &&
+                                float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var sx) &&
+                                float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var sy) &&
+                                float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var sz))
+                            {
+                                spawnMap[p.Id] = new Vector3(sx, sy, sz);
+                            }
+                        }
                     }
-                    continue;
+                    catch { }
                 }
 
-                if (component.Count < 2)
+                // Cluster by spawn proximity (no runtime position checks)
+                var visited = new HashSet<int>();
+                foreach (var p in players)
                 {
-                    // Solo hostile player: keep any existing group assignment, otherwise mark Solo
-                    foreach (var p in component)
+                    ct.ThrowIfCancellationRequested();
+                    if (visited.Contains(p.Id))
+                        continue;
+
+                    // If this player has no spawn recorded, skip forming new group for them
+                    if (!spawnMap.TryGetValue(p.Id, out var pSpawn))
                     {
+                        // Keep existing or mark as solo
                         if (!newGroups.ContainsKey(p.Id))
                         {
                             newGroups[p.Id] = AbstractPlayer.SoloGroupId;
                             p.AssignTeammate(false);
                             p.AssignGroup(AbstractPlayer.SoloGroupId);
                         }
+                        visited.Add(p.Id);
+                        continue;
                     }
-                    continue;
-                }
 
-                // Multi-player hostile group: reuse existing group id if any member has one
-                int existingGroup = component.Select(p => oldGroups.TryGetValue(p.Id, out var g) ? g : AbstractPlayer.SoloGroupId)
-                    .FirstOrDefault(g => g != AbstractPlayer.SoloGroupId && g != AbstractPlayer.TeammateGroupId);
+                    // Gather all players whose spawn is within threshold of this player's spawn
+                    var component = new List<ObservedPlayer> { p };
+                    visited.Add(p.Id);
+                    foreach (var q in players)
+                    {
+                        if (visited.Contains(q.Id))
+                            continue;
+                        if (!spawnMap.TryGetValue(q.Id, out var qSpawn))
+                            continue;
+                        if (Vector3.Distance(pSpawn, qSpawn) <= spawnDistanceThreshold)
+                        {
+                            component.Add(q);
+                            visited.Add(q.Id);
+                        }
+                    }
 
-                int groupId = existingGroup != 0 ? existingGroup : nextGroupId++;
+                    // Determine if component contains local (based on local player's current position)
+                    bool containsLocal = component.Any(c => Vector3.Distance(c.Position, localPlayer.Position) <= spawnDistanceThreshold);
 
-                foreach (var p in component)
-                {
-                    newGroups[p.Id] = groupId;
-                    p.AssignTeammate(false);
-                    p.AssignGroup(groupId);
+                    if (containsLocal)
+                    {
+                        foreach (var member in component)
+                        {
+                            newGroups[member.Id] = AbstractPlayer.TeammateGroupId;
+                            member.AssignTeammate(true);
+                        }
+                        continue;
+                    }
+
+                    if (component.Count < 2)
+                    {
+                        var single = component[0];
+                        if (!newGroups.ContainsKey(single.Id))
+                        {
+                            newGroups[single.Id] = AbstractPlayer.SoloGroupId;
+                            single.AssignTeammate(false);
+                            single.AssignGroup(AbstractPlayer.SoloGroupId);
+                        }
+                        continue;
+                    }
+
+                    // Multi-player hostile group: reuse existing group id if any member has one
+                    int existingGroup = component.Select(m => oldGroups.TryGetValue(m.Id, out var g) ? g : AbstractPlayer.SoloGroupId)
+                        .FirstOrDefault(g => g != AbstractPlayer.SoloGroupId && g != AbstractPlayer.TeammateGroupId);
+
+                    int groupId = existingGroup != 0 ? existingGroup : nextGroupId++;
+                    foreach (var member in component)
+                    {
+                        newGroups[member.Id] = groupId;
+                        member.AssignTeammate(false);
+                        member.AssignGroup(groupId);
+                    }
                 }
             }
-
-            // Handle late spawns: if a player's recorded spawn position is near an existing
-            // group's recorded spawn position, and the player doesn't already have a group,
-            // add them to that group.
-            if (spawnPositions is not null && spawnPositions.Count > 0)
+            else
             {
-                var persistedGroups = Config.Cache.RaidCache.Groups;
-                foreach (var pl in players)
+                // No spawn info available - preserve existing groups but do not form new proximity groups.
+                foreach (var p in players)
                 {
-                    if (newGroups.ContainsKey(pl.Id))
-                        continue;
-                    if (spawnPositions.TryGetValue(pl.Id, out var spawnStr))
+                    if (oldGroups.TryGetValue(p.Id, out var gid))
                     {
-                        try
+                        if (gid == AbstractPlayer.TeammateGroupId)
+                            p.AssignTeammate(true);
+                        else
                         {
-                            var parts = spawnStr.Split(';');
-                            if (parts.Length == 3 &&
-                                float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var sx) &&
-                                float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var sy) &&
-                                float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var sz))
-                            {
-                                var sPos = new Vector3(sx, sy, sz);
-                                foreach (var kv in persistedGroups)
-                                {
-                                    if (kv.Value == AbstractPlayer.SoloGroupId || kv.Value == AbstractPlayer.TeammateGroupId)
-                                        continue;
-                                    if (spawnPositions.TryGetValue(kv.Key, out var gSpawn))
-                                    {
-                                        var gp = gSpawn.Split(';');
-                                        if (gp.Length != 3) continue;
-                                        if (!float.TryParse(gp[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var gx)) continue;
-                                        if (!float.TryParse(gp[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var gy)) continue;
-                                        if (!float.TryParse(gp[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var gz)) continue;
-                                        var gPos = new Vector3(gx, gy, gz);
-                                        if (Vector3.Distance(sPos, gPos) <= groupDistanceThreshold)
-                                        {
-                                            var gid = kv.Value;
-                                            newGroups[pl.Id] = gid;
-                                            pl.AssignTeammate(false);
-                                            pl.AssignGroup(gid);
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
+                            p.AssignTeammate(false);
+                            p.AssignGroup(gid);
                         }
-                        catch { }
+                        newGroups[p.Id] = gid;
+                    }
+                    else
+                    {
+                        newGroups[p.Id] = AbstractPlayer.SoloGroupId;
+                        p.AssignTeammate(false);
+                        p.AssignGroup(AbstractPlayer.SoloGroupId);
                     }
                 }
             }
 
             // Atomic replacement - swap the entire dict reference
             Config.Cache.RaidCache.Groups = newGroups;
-
-            // Reapply group assignments to all currently allocated players so their
-            // in-memory GroupId and teammate status reflect the newly computed groups.
-            try
-            {
-                // Only reapply groups for human PMC players. Do not touch AI players
-                // (scavs/bosses) because their Type may reflect special AI roles and
-                // changing teammate/type would alter their colors.
-                foreach (var pl in _rgtPlayers.OfType<ObservedPlayer>().Where(p => p.IsHuman && p.IsPmc))
-                {
-                    if (newGroups.TryGetValue(pl.Id, out var gid))
-                    {
-                        if (gid == AbstractPlayer.TeammateGroupId)
-                            pl.AssignTeammate(true);
-                        else
-                        {
-                            pl.AssignTeammate(false);
-                            pl.AssignGroup(gid);
-                        }
-                    }
-                    else
-                    {
-                        pl.AssignTeammate(false);
-                        pl.AssignGroup(AbstractPlayer.SoloGroupId);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Logging.WriteLine($"[RefreshGroups] Reapply Groups ERROR: {ex}");
-            }
         }
 
         /// <summary>
@@ -717,7 +669,25 @@ namespace LoneEftDmaRadar.Tarkov.World
             {
                 if (Config.Misc.AutoGroups && _rgtPlayers.LocalPlayer is LocalPlayer local)
                 {
-                    RefreshGroups(local, CancellationToken.None, allowForming);
+                    // If groups are manually locked via UI, always reapply cached groups and do not form new ones.
+                    if (Config.Cache.RaidCache?.GroupsLocked == true)
+                    {
+                        Logging.WriteLine("[UpdateAutoGroups] Groups are manually locked - reapplying cached groups.");
+                        RefreshGroups(local, CancellationToken.None, allowForming: false);
+                        return;
+                    }
+                    // If the raid has been started for longer than the lock window, do not allow forming
+                    var lockWindow = TimeSpan.FromSeconds(30);
+                    if (allowForming && RaidStartedAt.HasValue && DateTime.UtcNow - RaidStartedAt.Value > lockWindow)
+                    {
+                        // Prevent forming new groups after the lock window elapsed; just reapply cached groups
+                        Logging.WriteLine("[UpdateAutoGroups] Group forming disabled - lock window elapsed.");
+                        RefreshGroups(local, CancellationToken.None, allowForming: false);
+                    }
+                    else
+                    {
+                        RefreshGroups(local, CancellationToken.None, allowForming);
+                    }
                 }
             }
             catch (Exception ex)

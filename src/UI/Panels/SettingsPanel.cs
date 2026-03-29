@@ -290,6 +290,38 @@ namespace LoneEftDmaRadar.UI.Panels
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip("Best-effort: automatically infer groups before raid start based on proximity");
 
+                // Group Locking
+                bool groupsLocked = Config.Cache.RaidCache?.GroupsLocked ?? false;
+                ImGui.SameLine();
+                if (groupsLocked)
+                {
+                    if (ImGui.Button("Groups Locked")) { }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Groups are locked for this raid. Click 'Lock/Unlock Groups' below to toggle.");
+                }
+                else
+                {
+                    if (ImGui.Button("Groups Unlocked")) { }
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip("Groups are unlocked for this raid. Click 'Lock/Unlock Groups' below to toggle.");
+                }
+
+                if (ImGui.Button("Lock/Unlock Groups"))
+                {
+                    try
+                    {
+                        if (Config.Cache.RaidCache is not null)
+                        {
+                            Config.Cache.RaidCache.GroupsLocked = !Config.Cache.RaidCache.GroupsLocked;
+                            // Persist immediately
+                            Config.Save();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logging.WriteLine($"[SettingsPanel] ERROR toggling GroupsLocked: {ex}");
+                    }
+                }
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip("Toggle whether group membership is locked for the current raid.");
+
                 ImGui.EndTabItem();
             }
         }
