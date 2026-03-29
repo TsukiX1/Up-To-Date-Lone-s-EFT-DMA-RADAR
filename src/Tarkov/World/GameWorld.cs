@@ -3,6 +3,8 @@
  * Licensed under GNU AGPLv3. See https://www.gnu.org/licenses/agpl-3.0.html
  */
 using LoneEftDmaRadar.Misc;
+using System.Globalization;
+using System.Linq;
 using LoneEftDmaRadar.Misc.Workers;
 using LoneEftDmaRadar.Tarkov.IL2CPP;
 using LoneEftDmaRadar.Tarkov.Unity.Structures;
@@ -345,6 +347,9 @@ namespace LoneEftDmaRadar.Tarkov.World
             RefreshEquipment(ct);
             RefreshQuestHelper(ct);
             PreRaidStartChecks(ct);
+
+            // Note: Auto-grouping is only performed at raid start or when a new player is allocated.
+            // Do not perform grouping or reapplication here to avoid dynamic grouping while players move.
         }
 
         /// <summary>
@@ -437,14 +442,19 @@ namespace LoneEftDmaRadar.Tarkov.World
         /// </summary>
         /// <param name="localPlayer"></param>
         /// <param name="ct"></param>
-        private void RefreshGroups(LocalPlayer localPlayer, CancellationToken ct)
+        private void RefreshGroups(LocalPlayer localPlayer, CancellationToken ct, bool allowForming = true)
         {
             ct.ThrowIfCancellationRequested();
 
-            const float groupDistanceThreshold = 15f;
+            // Group players together if they are within this distance (meters).
+            // Increased to 30m so PMCs that spawn near each other are grouped.
+            const float groupDistanceThreshold = 30f;
 
             // Build new assignments in a local dict
             var newGroups = new ConcurrentDictionary<int, int>();
+
+            // Snapshot of previous groups for preservation logic when not forming new groups
+            var oldGroups = Config.Cache.RaidCache?.Groups ?? new ConcurrentDictionary<int, int>();
 
             // Collect all valid human pmc players
             var players = _rgtPlayers
@@ -459,7 +469,7 @@ namespace LoneEftDmaRadar.Tarkov.World
                 return;
             }
 
-            // Include LocalPlayer as a node (synthetic ID)
+            // Include LocalPlayer as a node
             const int localId = int.MinValue;
             var allNodes = new Dictionary<int, Vector3>
             {
@@ -514,17 +524,68 @@ namespace LoneEftDmaRadar.Tarkov.World
             int nextGroupId = 1;
             var localRoot = Find(localId);
 
+            if (!allowForming)
+            {
+                // Runtime check: do NOT form or dissolve groups. Simply reapply the
+                // existing cached group assignments to the currently allocated players.
+                try
+                {
+                    foreach (var pl in _rgtPlayers.OfType<ObservedPlayer>().Where(p => p.IsHuman && p.IsPmc))
+                    {
+                        if (oldGroups.TryGetValue(pl.Id, out var gid))
+                        {
+                            if (gid == AbstractPlayer.TeammateGroupId)
+                                pl.AssignTeammate(true);
+                            else
+                            {
+                                pl.AssignTeammate(false);
+                                pl.AssignGroup(gid);
+                            }
+                        }
+                        else
+                        {
+                            // No cached group -> leave as solo
+                            pl.AssignTeammate(false);
+                            pl.AssignGroup(AbstractPlayer.SoloGroupId);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logging.WriteLine($"[RefreshGroups] Reapply cached groups ERROR: {ex}");
+                }
+
+                // Do not modify the persisted group map during runtime checks
+                return;
+            }
+
+            // allowForming == true : full grouping behavior (form groups at spawn/init)
+            // Preserve existing groups: start with the oldGroups so we do not dissolve
+            // previously-formed groups. Assign or extend groups for current components
+            // but do not overwrite existing assignments with Solo.
+            foreach (var kv in oldGroups)
+            {
+                newGroups[kv.Key] = kv.Value;
+            }
+
+            // Determine nextGroupId based on existing groups to avoid collisions
+            int maxExisting = oldGroups.Values
+                .Where(v => v > 0 && v != AbstractPlayer.TeammateGroupId && v != AbstractPlayer.SoloGroupId)
+                .DefaultIfEmpty(0)
+                .Max();
+            nextGroupId = Math.Max(nextGroupId, maxExisting + 1);
+
+            var spawnPositions = Config.Cache.RaidCache?.SpawnPositions;
+
             foreach (var component in components.Values)
             {
                 ct.ThrowIfCancellationRequested();
 
-                // Check if LocalPlayer is in this cluster (compare roots directly)
                 var componentRoot = Find(component[0].Id);
                 bool containsLocal = componentRoot == localRoot;
 
                 if (containsLocal)
                 {
-                    // Teammate cluster - assign even if solo
                     foreach (var p in component)
                     {
                         newGroups[p.Id] = AbstractPlayer.TeammateGroupId;
@@ -533,21 +594,26 @@ namespace LoneEftDmaRadar.Tarkov.World
                     continue;
                 }
 
-                // Hostile clusters - assign group ID (solo players get SoloGroupId)
                 if (component.Count < 2)
                 {
-                    // Solo hostile player
+                    // Solo hostile player: keep any existing group assignment, otherwise mark Solo
                     foreach (var p in component)
                     {
-                        newGroups[p.Id] = AbstractPlayer.SoloGroupId;
-                        p.AssignTeammate(false);
-                        p.AssignGroup(AbstractPlayer.SoloGroupId);
+                        if (!newGroups.ContainsKey(p.Id))
+                        {
+                            newGroups[p.Id] = AbstractPlayer.SoloGroupId;
+                            p.AssignTeammate(false);
+                            p.AssignGroup(AbstractPlayer.SoloGroupId);
+                        }
                     }
                     continue;
                 }
 
-                // Multi-player hostile group
-                int groupId = nextGroupId++;
+                // Multi-player hostile group: reuse existing group id if any member has one
+                int existingGroup = component.Select(p => oldGroups.TryGetValue(p.Id, out var g) ? g : AbstractPlayer.SoloGroupId)
+                    .FirstOrDefault(g => g != AbstractPlayer.SoloGroupId && g != AbstractPlayer.TeammateGroupId);
+
+                int groupId = existingGroup != 0 ? existingGroup : nextGroupId++;
 
                 foreach (var p in component)
                 {
@@ -557,8 +623,107 @@ namespace LoneEftDmaRadar.Tarkov.World
                 }
             }
 
+            // Handle late spawns: if a player's recorded spawn position is near an existing
+            // group's recorded spawn position, and the player doesn't already have a group,
+            // add them to that group.
+            if (spawnPositions is not null && spawnPositions.Count > 0)
+            {
+                var persistedGroups = Config.Cache.RaidCache.Groups;
+                foreach (var pl in players)
+                {
+                    if (newGroups.ContainsKey(pl.Id))
+                        continue;
+                    if (spawnPositions.TryGetValue(pl.Id, out var spawnStr))
+                    {
+                        try
+                        {
+                            var parts = spawnStr.Split(';');
+                            if (parts.Length == 3 &&
+                                float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var sx) &&
+                                float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var sy) &&
+                                float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var sz))
+                            {
+                                var sPos = new Vector3(sx, sy, sz);
+                                foreach (var kv in persistedGroups)
+                                {
+                                    if (kv.Value == AbstractPlayer.SoloGroupId || kv.Value == AbstractPlayer.TeammateGroupId)
+                                        continue;
+                                    if (spawnPositions.TryGetValue(kv.Key, out var gSpawn))
+                                    {
+                                        var gp = gSpawn.Split(';');
+                                        if (gp.Length != 3) continue;
+                                        if (!float.TryParse(gp[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var gx)) continue;
+                                        if (!float.TryParse(gp[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var gy)) continue;
+                                        if (!float.TryParse(gp[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var gz)) continue;
+                                        var gPos = new Vector3(gx, gy, gz);
+                                        if (Vector3.Distance(sPos, gPos) <= groupDistanceThreshold)
+                                        {
+                                            var gid = kv.Value;
+                                            newGroups[pl.Id] = gid;
+                                            pl.AssignTeammate(false);
+                                            pl.AssignGroup(gid);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+                }
+            }
+
             // Atomic replacement - swap the entire dict reference
             Config.Cache.RaidCache.Groups = newGroups;
+
+            // Reapply group assignments to all currently allocated players so their
+            // in-memory GroupId and teammate status reflect the newly computed groups.
+            try
+            {
+                // Only reapply groups for human PMC players. Do not touch AI players
+                // (scavs/bosses) because their Type may reflect special AI roles and
+                // changing teammate/type would alter their colors.
+                foreach (var pl in _rgtPlayers.OfType<ObservedPlayer>().Where(p => p.IsHuman && p.IsPmc))
+                {
+                    if (newGroups.TryGetValue(pl.Id, out var gid))
+                    {
+                        if (gid == AbstractPlayer.TeammateGroupId)
+                            pl.AssignTeammate(true);
+                        else
+                        {
+                            pl.AssignTeammate(false);
+                            pl.AssignGroup(gid);
+                        }
+                    }
+                    else
+                    {
+                        pl.AssignTeammate(false);
+                        pl.AssignGroup(AbstractPlayer.SoloGroupId);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Logging.WriteLine($"[RefreshGroups] Reapply Groups ERROR: {ex}");
+            }
+        }
+
+        /// <summary>
+        /// Public wrapper to trigger proximity-based auto grouping from external callers.
+        /// </summary>
+        public void UpdateAutoGroups(bool allowForming = false)
+        {
+            try
+            {
+                if (Config.Misc.AutoGroups && _rgtPlayers.LocalPlayer is LocalPlayer local)
+                {
+                    RefreshGroups(local, CancellationToken.None, allowForming);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logging.WriteLine($"[UpdateAutoGroups] ERROR: {ex}");
+            }
         }
 
         private void RefreshEquipment(CancellationToken ct)

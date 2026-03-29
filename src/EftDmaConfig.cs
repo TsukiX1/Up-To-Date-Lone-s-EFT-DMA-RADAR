@@ -575,6 +575,12 @@ namespace LoneEftDmaRadar
         [JsonPropertyName("groups")]
         public ConcurrentDictionary<int, int> Groups { get; set; } = new();
         /// <summary>
+        /// Player spawn positions recorded when players first appear.
+        /// Key: Player Id | Value: "x;y;z" (Invariant culture floats)
+        /// </summary>
+        [JsonPropertyName("spawnPositions")]
+        public ConcurrentDictionary<int, string> SpawnPositions { get; set; } = new();
+        /// <summary>
         /// Defines players that have been 'focused' by the user (Right-Click on radar icon).
         /// Key: Player Id | Value: no-op
         /// </summary>
