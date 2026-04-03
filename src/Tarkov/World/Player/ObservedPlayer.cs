@@ -15,6 +15,7 @@ namespace LoneEftDmaRadar.Tarkov.World.Player
     {
         private readonly GameWorld _gameWorld;
         private readonly RaidCache _raidCache;
+        private DateTime _lastGroupRefresh;
         /// <summary>
         /// Player's Unique Id within this Raid Instance [Human Players Only].
         /// </summary>
@@ -27,6 +28,37 @@ namespace LoneEftDmaRadar.Tarkov.World.Player
         {
             get => _specialName ?? base.Name;
             protected set => base.Name = value;
+        }
+
+        private void TryRefreshHumanGroupFromView()
+        {
+            try
+            {
+                if (!IsHuman)
+                    return;
+                string grp = ReadGroupString();
+                if (string.IsNullOrEmpty(grp))
+                    return;
+                // Map group string to numeric id - try to reuse existing cache if possible
+                // If the local player's profile parsing stores numeric GroupIds elsewhere, that mapping should be used.
+                // For now, if non-empty group string exists, mark as teammate if it matches local player's group string
+                var local = Memory.LocalPlayer as LocalPlayer;
+                if (local is not null)
+                {
+                    var localGroup = Memory.ReadUnityString(local.Profile + Offsets.PlayerInfo.GroupId);
+                    if (!string.IsNullOrEmpty(localGroup) && localGroup == grp)
+                    {
+                        AssignTeammate(true);
+                        return;
+                    }
+                }
+                // Otherwise, keep as PMC/PScav with SoloGroupId unless cache has mapping
+                if (Config.Cache.RaidCache is RaidCache rc && rc.Groups.TryGetValue(Id, out var gid))
+                {
+                    SetGroupId(gid);
+                }
+            }
+            catch { }
         }
         private PlayerType? _specialType; // Backing field for special roles
         /// <summary>
@@ -140,12 +172,99 @@ namespace LoneEftDmaRadar.Tarkov.World.Player
             else
                 throw new NotImplementedException(nameof(PlayerSide));
             Equipment = new PlayerEquipment(this);
-            GroupId = TryGetGroup(Id);
+            // Map native group string to internal group id the same way LocalPlayer/ClientPlayer does
+            try
+            {
+                SetGroupId(GetGroupNumber());
+            }
+            catch { GroupId = TryGetGroup(Id); }
             if (GroupId == TeammateGroupId)
             {
                 Type = PlayerType.Teammate;
             }
             IsFocused = _raidCache is RaidCache rc && rc.Focused.ContainsKey(Id);
+        }
+
+        private string ReadGroupString()
+        {
+            try
+            {
+                var profilePtr = Memory.ReadPtr(this + Offsets.Player.Profile);
+                if (profilePtr == 0) return string.Empty;
+                var infoPtr = Memory.ReadPtr(profilePtr + Offsets.Profile.Info);
+                if (infoPtr == 0) return string.Empty;
+                return Memory.ReadUnityString(infoPtr + Offsets.PlayerInfo.GroupId);
+            }
+            catch { return string.Empty; }
+        }
+
+        private int GetGroupNumber()
+        {
+            try
+            {
+                string grp = ReadGroupString();
+                if (string.IsNullOrEmpty(grp))
+                    return TryGetGroup(Id);
+
+                // If matches local player's group string -> teammate
+                var local = Memory.LocalPlayer as LocalPlayer;
+                if (local is not null)
+                {
+                    try
+                    {
+                        var localGroup = Memory.ReadUnityString(local.Profile + Offsets.PlayerInfo.GroupId);
+                        if (!string.IsNullOrEmpty(localGroup) && localGroup == grp)
+                            return TeammateGroupId;
+                    }
+                    catch { }
+                }
+
+                // Generate a stable positive id from the group string using FNV-1a 32-bit
+                uint hash = 2166136261u;
+                foreach (var b in System.Text.Encoding.UTF8.GetBytes(grp))
+                {
+                    hash ^= b;
+                    hash *= 16777619u;
+                }
+                // Ensure id fits in int and is positive, and not equal to reserved ids
+                int gid = (int)(hash & 0x7FFFFFFF);
+                if (gid == SoloGroupId || gid == TeammateGroupId || gid == 0)
+                {
+                    gid = Math.Max(1, Math.Abs(gid) + 1);
+                }
+
+                // Persist mapping for this player so other code can reapply it
+                try
+                {
+                    if (Config.Cache.RaidCache is RaidCache rc)
+                    {
+                        rc.Groups[Id] = gid;
+                    }
+                }
+                catch { }
+
+                return gid;
+            }
+            catch
+            {
+                return TryGetGroup(Id);
+            }
+        }
+
+        private void SetGroupId(int gid)
+        {
+            GroupId = gid;
+            try
+            {
+                if (Config.Cache.RaidCache is RaidCache rc)
+                {
+                    if (gid == SoloGroupId)
+                        _ = rc.Groups.TryRemove(Id, out _);
+                    else
+                        rc.Groups[Id] = gid;
+                }
+            }
+            catch { }
         }
 
         /// <summary>
@@ -281,6 +400,18 @@ namespace LoneEftDmaRadar.Tarkov.World.Player
                 UpdateHealthStatus();
             }
             base.OnRegRefresh(scatter, registered, isActive);
+
+            // Periodically attempt to refresh human group information from the observed player's profile view
+            try
+            {
+                // Run every ~1.5 seconds
+                if (_lastGroupRefresh == default || DateTime.UtcNow - _lastGroupRefresh > TimeSpan.FromSeconds(1.5))
+                {
+                    _lastGroupRefresh = DateTime.UtcNow;
+                    TryRefreshHumanGroupFromView();
+                }
+            }
+            catch { }
         }
 
         /// <summary>
