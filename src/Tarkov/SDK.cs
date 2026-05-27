@@ -5,12 +5,12 @@ namespace SDK
         public readonly partial struct GameWorld
         {
             public const uint BtrController = 0x28;
-            public const uint LocationId = 0xD0;
-            public const uint LootList = 0x198;
-            public const uint RegisteredPlayers = 0x1B8;
-            public const uint MainPlayer = 0x210;
-            public const uint SynchronizableObjectLogicProcessor = 0x248;
-            public const uint Grenades = 0x288;
+            public const uint LocationId = 0xE8; // updated
+            public const uint LootList = 0x1B0; // updated
+            public const uint RegisteredPlayers = 0x1D0; // updated
+            public const uint MainPlayer = 0x230; // updated
+            public const uint SynchronizableObjectLogicProcessor = 0x270; // updated
+            public const uint Grenades = 0x2B0; // updated
         }
 
         public readonly partial struct SynchronizableObject
@@ -55,9 +55,9 @@ namespace SDK
             public const uint MovementContext = 0x60;
             public const uint _playerBody = 0x190;
             public const uint GameWorld = 0x5F8;
-            public const uint Corpse = 0x680;
-            public const uint Location = 0x878;
-            public const uint Profile = 0x908;
+            public const uint Corpse = 0x718; // updated
+            public const uint Location = 0x918; // updated
+            public const uint Profile = 0x9B0; // updated
             public const uint _handsController = 0x988;
             public const uint _playerLookRaycastTransform = 0xA18;
         }
@@ -69,6 +69,7 @@ namespace SDK
             public const uint Id = 0x7C;
             public const uint Side = 0x94;
             public const uint IsAI = 0xA0;
+            public const uint GroupID = 0x80; // added from new offsets
             public const uint PlayerBody = 0xD8;
         }
 
